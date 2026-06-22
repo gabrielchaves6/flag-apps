@@ -232,6 +232,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
 
 fn main() {
     install_panic_log();
+    // Single-instance guard — exit silently if already running
+    unsafe {
+        use windows::Win32::System::Threading::{CreateMutexW, MUTEX_ALL_ACCESS};
+        use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+        let name = w("FlagApps_SingleInstance");
+        let _ = CreateMutexW(None, true, windows::core::PCWSTR(name.as_ptr()));
+        if windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS {
+            return;
+        }
+    }
     unsafe {
         let hinstance: HINSTANCE = GetModuleHandleW(None).map(|h| h.into()).unwrap_or_default();
         let class = w(MSG_CLASS);
