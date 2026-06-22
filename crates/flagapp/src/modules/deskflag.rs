@@ -4,7 +4,7 @@
 #![allow(static_mut_refs)]
 
 use super::{ids::DESKFLAG_BASE, FlagModule};
-use flag_win::{get_work_area, make_text_icon, rgb, w, wn};
+use flag_win::{get_work_area, make_text_icon, reg_read_dword, reg_write_dword, rgb, w, wn};
 use windows::core::{GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -13,10 +13,12 @@ use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVE
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CMD_TOGGLE:    u32 = DESKFLAG_BASE;
-const TIMER_HUD:     usize = DESKFLAG_BASE as usize;
-const HUD_MS:        u32 = 2500;
+const CMD_TOGGLE:     u32 = DESKFLAG_BASE;
+const TIMER_HUD:      usize = DESKFLAG_BASE as usize;
+const HUD_MS:         u32 = 2500;
 const WM_DESK_CHANGE: u32 = WM_APP + 20;
+const REG_KEY:        &str = r"Software\DeskFlag";
+const REG_ENABLED:    &str = "Enabled";
 
 pub struct DeskFlag {
     enabled:     bool,
@@ -32,8 +34,9 @@ unsafe impl Send for DeskFlag {}
 
 impl DeskFlag {
     pub fn new() -> Self {
+        let enabled = unsafe { reg_read_dword(REG_KEY, REG_ENABLED).unwrap_or(0) != 0 };
         Self {
-            enabled:     true,
+            enabled,
             icon_on:     HICON::default(),
             icon_off:    HICON::default(),
             hud_hwnd:    None,
@@ -82,11 +85,11 @@ impl FlagModule for DeskFlag {
                 Err(_) => {}
             }
 
-            // Hook EVENT_SYSTEM_DESKTOPSWITCH (0x0020)
-            self.hook = SetWinEventHook(0x0020, 0x0020, None, Some(desk_winevent),
-                0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-
             GLOBAL_DESKFLAG_HWND = Some(hwnd);
+            if self.enabled {
+                self.hook = SetWinEventHook(0x0020, 0x0020, None, Some(desk_winevent),
+                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            }
         }
     }
 
@@ -133,9 +136,19 @@ impl FlagModule for DeskFlag {
     fn on_command(&mut self, _hwnd: HWND, cmd: u32) -> bool {
         if cmd == CMD_TOGGLE {
             self.enabled = !self.enabled;
-            if !self.enabled {
-                if let Some(h) = self.hud_hwnd {
-                    unsafe { let _ = ShowWindow(h, SW_HIDE); }
+            unsafe {
+                reg_write_dword(REG_KEY, REG_ENABLED, self.enabled as u32);
+                if self.enabled {
+                    if self.hook.is_invalid() {
+                        self.hook = SetWinEventHook(0x0020, 0x0020, None, Some(desk_winevent),
+                            0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+                    }
+                } else {
+                    if !self.hook.is_invalid() {
+                        let _ = UnhookWinEvent(self.hook);
+                        self.hook = HWINEVENTHOOK::default();
+                    }
+                    if let Some(h) = self.hud_hwnd { let _ = ShowWindow(h, SW_HIDE); }
                 }
             }
             return true;

@@ -1,42 +1,35 @@
 // NewTrayFlag — toggles "show all tray icons" via IsPromoted registry sweep.
-// Ported from Music\backup\newtrayflag\rs\src\main.rs
 
 use super::{ids::NEWTRAYFLAG_BASE, FlagModule};
-use flag_win::{make_dots_icon, rgb, w};
+use flag_win::{make_dots_icon, reg_read_dword, reg_write_dword, rgb, w};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Registry::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CMD_TOGGLE:    u32 = NEWTRAYFLAG_BASE;
-const TIMER_SWEEP:   usize = NEWTRAYFLAG_BASE as usize;
-const SWEEP_MS:      u32 = 1200;
-const SWEEP_CAP:     usize = 8;
+const CMD_TOGGLE:  u32 = NEWTRAYFLAG_BASE;
+const TIMER_SWEEP: usize = NEWTRAYFLAG_BASE as usize;
+const SWEEP_MS:    u32 = 1200;
+const SWEEP_CAP:   usize = 8;
 
-const REG_NOTIFY: &str = r"Control Panel\NotifyIconSettings";
+const REG_NOTIFY:  &str = r"Control Panel\NotifyIconSettings";
+const REG_KEY:     &str = r"Software\NewTrayFlag";
+const REG_ENABLED: &str = "ShowAll";
 
 pub struct NewTrayFlag {
-    on:          bool,
-    icon_on:     HICON,
-    icon_off:    HICON,
-    sweep_idx:   usize,
-    keys:        Vec<String>,
+    on:        bool,
+    icon_on:   HICON,
+    icon_off:  HICON,
+    sweep_idx: usize,
+    keys:      Vec<String>,
 }
 
 unsafe impl Send for NewTrayFlag {}
 
 impl NewTrayFlag {
     pub fn new() -> Self {
-        Self {
-            on:        false,
-            icon_on:   HICON::default(),
-            icon_off:  HICON::default(),
-            sweep_idx: 0,
-            keys:      vec![],
-        }
-    }
-    pub fn current_icon(&self) -> HICON {
-        if self.on { self.icon_on } else { self.icon_off }
+        let on = unsafe { reg_read_dword(REG_KEY, REG_ENABLED).unwrap_or(0) != 0 };
+        Self { on, icon_on: HICON::default(), icon_off: HICON::default(), sweep_idx: 0, keys: vec![] }
     }
 }
 
@@ -48,8 +41,8 @@ impl FlagModule for NewTrayFlag {
             self.icon_on  = make_dots_icon(rgb(37, 99, 235));
             self.icon_off = make_dots_icon(rgb(80, 80, 92));
             self.keys = enum_notify_keys();
-            self.on   = detect_state(&self.keys);
-            let _ = SetTimer(hwnd, TIMER_SWEEP, SWEEP_MS, None);
+            // Only start sweep timer if user had it on; don't touch registry on fresh install.
+            if self.on { let _ = SetTimer(hwnd, TIMER_SWEEP, SWEEP_MS, None); }
         }
     }
 
@@ -62,9 +55,7 @@ impl FlagModule for NewTrayFlag {
         unsafe {
             let target = self.on;
             let end = (self.sweep_idx + SWEEP_CAP).min(self.keys.len());
-            for key in &self.keys[self.sweep_idx..end] {
-                set_promoted(key, target);
-            }
+            for key in &self.keys[self.sweep_idx..end] { set_promoted(key, target); }
             self.sweep_idx = end;
             if self.sweep_idx >= self.keys.len() {
                 self.sweep_idx = 0;
@@ -85,14 +76,18 @@ impl FlagModule for NewTrayFlag {
     }
 
     fn on_command(&mut self, hwnd: HWND, cmd: u32) -> bool {
-        if cmd == CMD_TOGGLE {
-            self.on = !self.on;
-            self.sweep_idx = 0;
-            unsafe { set_all_promoted(&self.keys, self.on); nudge_taskbar(); }
-            let _ = hwnd;
-            return true;
+        if cmd != CMD_TOGGLE { return false; }
+        self.on = !self.on;
+        self.sweep_idx = 0;
+        unsafe {
+            reg_write_dword(REG_KEY, REG_ENABLED, self.on as u32);
+            self.keys = enum_notify_keys();
+            set_all_promoted(&self.keys, self.on);
+            nudge_taskbar();
+            if self.on { let _ = SetTimer(hwnd, TIMER_SWEEP, SWEEP_MS, None); }
+            else       { let _ = KillTimer(hwnd, TIMER_SWEEP); }
         }
-        false
+        true
     }
 }
 
@@ -118,12 +113,8 @@ unsafe fn enum_notify_keys() -> Vec<String> {
     result
 }
 
-unsafe fn detect_state(keys: &[String]) -> bool {
-    keys.iter().any(|k| flag_win::reg_read_dword(k, "IsPromoted") == Some(1))
-}
-
 unsafe fn set_promoted(subkey: &str, on: bool) {
-    flag_win::reg_write_dword(subkey, "IsPromoted", on as u32);
+    reg_write_dword(subkey, "IsPromoted", on as u32);
 }
 
 unsafe fn set_all_promoted(keys: &[String], on: bool) {

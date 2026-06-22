@@ -1,7 +1,6 @@
 // EnergyFlag — switches between Remote and OnSite power profiles.
 // Also manages: veil (per-monitor capture-excluded overlay), dim (LightSwitch→PowerToys),
 // and NoSleepDC (caffeinate on battery).
-// Ported from Music\backup\energy_flag\rs\src\main.rs
 
 use super::{ids::ENERGYFLAG_BASE, FlagModule};
 use flag_win::{make_text_icon, reg_read_dword, reg_write_dword, rgb, w};
@@ -15,13 +14,15 @@ use windows::Win32::System::Threading::{CreateEventW, SetEvent, ResetEvent};
 use windows::Win32::System::Threading::{CreateProcessW, PROCESS_CREATION_FLAGS, STARTUPINFOW, PROCESS_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CMD_REMOTE:     u32 = ENERGYFLAG_BASE;
-const CMD_ONSITE:     u32 = ENERGYFLAG_BASE + 1;
-const CMD_VEIL:       u32 = ENERGYFLAG_BASE + 2;
-const CMD_DIM:        u32 = ENERGYFLAG_BASE + 3;
-const CMD_NOSLEEP_DC: u32 = ENERGYFLAG_BASE + 4;
+const CMD_ENABLE:     u32 = ENERGYFLAG_BASE;
+const CMD_REMOTE:     u32 = ENERGYFLAG_BASE + 1;
+const CMD_ONSITE:     u32 = ENERGYFLAG_BASE + 2;
+const CMD_VEIL:       u32 = ENERGYFLAG_BASE + 3;
+const CMD_DIM:        u32 = ENERGYFLAG_BASE + 4;
+const CMD_NOSLEEP_DC: u32 = ENERGYFLAG_BASE + 5;
 
 const REG_KEY:     &str = r"Software\EnergyFlag";
+const REG_ENABLED: &str = "Enabled";
 const REG_MODE:    &str = "Mode";
 const REG_VEIL:    &str = "Veil";
 const REG_DIM:     &str = "Dim";
@@ -34,15 +35,15 @@ const WS_EX_TRANSPARENT_VAL:  u32 = 0x00000020;
 pub enum EfMode { Remote, OnSite }
 
 struct PowerTimeouts { monitor_ac: u32, monitor_dc: u32, standby_ac: u32, standby_dc: u32, hibernate_ac: u32, hibernate_dc: u32 }
-
-const REMOTE_TIMEOUTS: PowerTimeouts = PowerTimeouts { monitor_ac: 30, monitor_dc: 15, standby_ac: 0, standby_dc: 0, hibernate_ac: 0, hibernate_dc: 0 };
-const ONSITE_TIMEOUTS: PowerTimeouts  = PowerTimeouts { monitor_ac: 10, monitor_dc: 5,  standby_ac: 30, standby_dc: 20, hibernate_ac: 0, hibernate_dc: 180 };
+const REMOTE_TIMEOUTS: PowerTimeouts = PowerTimeouts { monitor_ac: 30, monitor_dc: 15, standby_ac: 0,  standby_dc: 0,  hibernate_ac: 0, hibernate_dc: 0   };
+const ONSITE_TIMEOUTS:  PowerTimeouts = PowerTimeouts { monitor_ac: 10, monitor_dc: 5,  standby_ac: 30, standby_dc: 20, hibernate_ac: 0, hibernate_dc: 180 };
 
 pub struct EnergyFlag {
-    mode:      EfMode,
-    veil:      bool,
-    dim:       bool,
-    nosleep:   bool,
+    enabled:     bool,
+    mode:        EfMode,
+    veil:        bool,
+    dim:         bool,
+    nosleep:     bool,
     icon_remote: HICON,
     icon_onsite: HICON,
     veil_hwnds:  Vec<HWND>,
@@ -54,15 +55,13 @@ unsafe impl Send for EnergyFlag {}
 impl EnergyFlag {
     pub fn new() -> Self {
         unsafe {
-            let mode    = if reg_read_dword(REG_KEY, REG_MODE).unwrap_or(0)    == 1 { EfMode::OnSite } else { EfMode::Remote };
-            let veil    = reg_read_dword(REG_KEY, REG_VEIL).unwrap_or(0)    != 0;
-            let dim     = reg_read_dword(REG_KEY, REG_DIM).unwrap_or(0)     != 0;
+            let enabled = reg_read_dword(REG_KEY, REG_ENABLED).unwrap_or(0) != 0;
+            let mode    = if reg_read_dword(REG_KEY, REG_MODE).unwrap_or(0) == 1 { EfMode::OnSite } else { EfMode::Remote };
+            let veil    = reg_read_dword(REG_KEY, REG_VEIL).unwrap_or(0) != 0;
+            let dim     = reg_read_dword(REG_KEY, REG_DIM).unwrap_or(0)  != 0;
             let nosleep = reg_read_dword(REG_KEY, REG_NOSLEEP).unwrap_or(0) != 0;
-            Self { mode, veil, dim, nosleep, icon_remote: HICON::default(), icon_onsite: HICON::default(), veil_hwnds: vec![], dim_event: None }
+            Self { enabled, mode, veil, dim, nosleep, icon_remote: HICON::default(), icon_onsite: HICON::default(), veil_hwnds: vec![], dim_event: None }
         }
-    }
-    pub fn current_icon(&self) -> HICON {
-        match self.mode { EfMode::Remote => self.icon_remote, EfMode::OnSite => self.icon_onsite }
     }
 }
 
@@ -71,12 +70,13 @@ impl FlagModule for EnergyFlag {
 
     fn on_init(&mut self, hwnd: HWND) {
         unsafe {
-            self.icon_remote = make_text_icon(rgb(37, 99, 235), "R");
-            self.icon_onsite = make_text_icon(rgb(16, 185, 129), "O");
+            self.icon_remote = make_text_icon(rgb(37, 99, 235),   "R");
+            self.icon_onsite = make_text_icon(rgb(16, 185, 129),  "O");
+            if !self.enabled { return; }
             apply_mode(self.mode);
-            if self.veil  { show_veil(hwnd, &mut self.veil_hwnds);  }
-            if self.dim   { signal_dim(self.dim, &mut self.dim_event); }
-            if self.nosleep { apply_nosleep(self.nosleep); }
+            if self.veil    { show_veil(hwnd, &mut self.veil_hwnds); }
+            if self.dim     { signal_dim(true, &mut self.dim_event); }
+            if self.nosleep { apply_nosleep(true); }
         }
     }
 
@@ -84,13 +84,13 @@ impl FlagModule for EnergyFlag {
         unsafe {
             hide_veil(&mut self.veil_hwnds);
             signal_dim(false, &mut self.dim_event);
-            apply_nosleep(false);
+            if self.nosleep { apply_nosleep(false); }
         }
     }
 
     fn on_display_change(&mut self, hwnd: HWND) {
         unsafe {
-            if self.veil {
+            if self.enabled && self.veil {
                 hide_veil(&mut self.veil_hwnds);
                 show_veil(hwnd, &mut self.veil_hwnds);
             }
@@ -99,26 +99,54 @@ impl FlagModule for EnergyFlag {
 
     fn append_menu(&self, hmenu: HMENU) -> bool {
         unsafe {
-            let cr = if self.mode == EfMode::Remote  { MF_CHECKED } else { MF_UNCHECKED };
-            let co = if self.mode == EfMode::OnSite  { MF_CHECKED } else { MF_UNCHECKED };
-            let _ = AppendMenuW(hmenu, MF_STRING | cr, CMD_REMOTE as usize, PCWSTR(w("EnergyFlag — Remote").as_ptr()));
-            let _ = AppendMenuW(hmenu, MF_STRING | co, CMD_ONSITE as usize, PCWSTR(w("EnergyFlag — OnSite").as_ptr()));
+            let chk_en = if self.enabled { MF_CHECKED } else { MF_UNCHECKED };
+            let gray    = if self.enabled { MENU_ITEM_FLAGS(0) } else { MF_GRAYED };
+            let cr = if self.mode == EfMode::Remote { MF_CHECKED } else { gray };
+            let co = if self.mode == EfMode::OnSite { MF_CHECKED } else { gray };
+            let cv = if self.veil    { MF_CHECKED } else { gray };
+            let cd = if self.dim     { MF_CHECKED } else { gray };
+            let cn = if self.nosleep { MF_CHECKED } else { gray };
+            let _ = AppendMenuW(hmenu, MF_STRING | chk_en, CMD_ENABLE as usize,     PCWSTR(w("EnergyFlag — Enabled").as_ptr()));
+            let _ = AppendMenuW(hmenu, MF_STRING | cr,     CMD_REMOTE as usize,     PCWSTR(w("  Remote (long timeouts)").as_ptr()));
+            let _ = AppendMenuW(hmenu, MF_STRING | co,     CMD_ONSITE as usize,     PCWSTR(w("  OnSite (short timeouts)").as_ptr()));
             let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-            let cv = if self.veil    { MF_CHECKED } else { MF_UNCHECKED };
-            let cd = if self.dim     { MF_CHECKED } else { MF_UNCHECKED };
-            let cn = if self.nosleep { MF_CHECKED } else { MF_UNCHECKED };
-            let _ = AppendMenuW(hmenu, MF_STRING | cv, CMD_VEIL as usize,       PCWSTR(w("EnergyFlag — Veil (hide screen)").as_ptr()));
-            let _ = AppendMenuW(hmenu, MF_STRING | cd, CMD_DIM as usize,        PCWSTR(w("EnergyFlag — Dim (PowerToys)").as_ptr()));
-            let _ = AppendMenuW(hmenu, MF_STRING | cn, CMD_NOSLEEP_DC as usize, PCWSTR(w("EnergyFlag — Keep awake on battery").as_ptr()));
+            let _ = AppendMenuW(hmenu, MF_STRING | cv,     CMD_VEIL as usize,       PCWSTR(w("  Veil (hide screen from capture)").as_ptr()));
+            let _ = AppendMenuW(hmenu, MF_STRING | cd,     CMD_DIM as usize,        PCWSTR(w("  Dim (PowerToys LightSwitch)").as_ptr()));
+            let _ = AppendMenuW(hmenu, MF_STRING | cn,     CMD_NOSLEEP_DC as usize, PCWSTR(w("  Keep awake on battery").as_ptr()));
         }
         true
     }
 
     fn on_command(&mut self, hwnd: HWND, cmd: u32) -> bool {
         match cmd {
-            CMD_REMOTE => { self.mode = EfMode::Remote; unsafe { apply_mode(self.mode); reg_write_dword(REG_KEY, REG_MODE, 0); } true }
-            CMD_ONSITE => { self.mode = EfMode::OnSite; unsafe { apply_mode(self.mode); reg_write_dword(REG_KEY, REG_MODE, 1); } true }
-            CMD_VEIL => {
+            CMD_ENABLE => {
+                self.enabled = !self.enabled;
+                unsafe {
+                    reg_write_dword(REG_KEY, REG_ENABLED, self.enabled as u32);
+                    if self.enabled {
+                        apply_mode(self.mode);
+                        if self.veil    { show_veil(hwnd, &mut self.veil_hwnds); }
+                        if self.dim     { signal_dim(true, &mut self.dim_event); }
+                        if self.nosleep { apply_nosleep(true); }
+                    } else {
+                        hide_veil(&mut self.veil_hwnds);
+                        signal_dim(false, &mut self.dim_event);
+                        if self.nosleep { apply_nosleep(false); }
+                    }
+                }
+                true
+            }
+            CMD_REMOTE if self.enabled => {
+                self.mode = EfMode::Remote;
+                unsafe { apply_mode(self.mode); reg_write_dword(REG_KEY, REG_MODE, 0); }
+                true
+            }
+            CMD_ONSITE if self.enabled => {
+                self.mode = EfMode::OnSite;
+                unsafe { apply_mode(self.mode); reg_write_dword(REG_KEY, REG_MODE, 1); }
+                true
+            }
+            CMD_VEIL if self.enabled => {
                 self.veil = !self.veil;
                 unsafe {
                     reg_write_dword(REG_KEY, REG_VEIL, self.veil as u32);
@@ -127,12 +155,12 @@ impl FlagModule for EnergyFlag {
                 }
                 true
             }
-            CMD_DIM => {
+            CMD_DIM if self.enabled => {
                 self.dim = !self.dim;
                 unsafe { reg_write_dword(REG_KEY, REG_DIM, self.dim as u32); signal_dim(self.dim, &mut self.dim_event); }
                 true
             }
-            CMD_NOSLEEP_DC => {
+            CMD_NOSLEEP_DC if self.enabled => {
                 self.nosleep = !self.nosleep;
                 unsafe { reg_write_dword(REG_KEY, REG_NOSLEEP, self.nosleep as u32); apply_nosleep(self.nosleep); }
                 true
@@ -174,10 +202,7 @@ unsafe fn signal_dim(on: bool, ev: &mut Option<HANDLE>) {
     let event_name = w("LightSwitch");
     if on {
         let h = CreateEventW(None, true, false, PCWSTR(event_name.as_ptr())).ok();
-        if let Some(h) = h {
-            let _ = SetEvent(h);
-            *ev = Some(h);
-        }
+        if let Some(h) = h { let _ = SetEvent(h); *ev = Some(h); }
     } else if let Some(h) = ev.take() {
         let _ = ResetEvent(h);
         let _ = CloseHandle(h);
@@ -219,8 +244,7 @@ unsafe fn show_veil(msg_hwnd: HWND, veils: &mut Vec<HWND>) {
             PCWSTR(class.as_ptr()), PCWSTR(w("").as_ptr()), WS_POPUP,
             rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
             msg_hwnd, None, hinstance, None) {
-            Ok(h) => h,
-            Err(_) => continue,
+            Ok(h) => h, Err(_) => continue,
         };
         use windows::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity;
         let _ = SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY(WDA_EXCLUDEFROMCAPTURE));

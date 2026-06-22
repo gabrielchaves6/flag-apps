@@ -3,6 +3,14 @@
 
 mod modules;
 
+fn install_panic_log() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("{info}");
+        let path = std::env::temp_dir().join("flagapp_panic.txt");
+        let _ = std::fs::write(&path, &msg);
+    }));
+}
+
 use modules::{
     ids::{GLOBAL_ABOUT, GLOBAL_UPDATE, GLOBAL_EXIT},
     anyflag::AnyFlag, keyflag::KeyFlag, energyflag::EnergyFlag,
@@ -104,6 +112,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         match msg {
             WM_TRAY => {
                 let event = (lparam.0 & 0xffff) as u32;
+                let _ = std::fs::write(
+                    std::env::temp_dir().join("flagapp_tray.txt"),
+                    format!("WM_TRAY event=0x{:04X} wp=0x{:X} lp=0x{:X}", event, wparam.0, lparam.0),
+                );
                 match event {
                     WM_RBUTTONUP | WM_CONTEXTMENU => {
                         G_WORK = get_work_area();
@@ -210,6 +222,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
 }
 
 fn main() {
+    install_panic_log();
     unsafe {
         let hinstance: HINSTANCE = GetModuleHandleW(None).map(|h| h.into()).unwrap_or_default();
         let class = w(MSG_CLASS);
@@ -259,7 +272,7 @@ fn main() {
         G_NID.uCallbackMessage = WM_TRAY;
         G_NID.hIcon  = G_ICON_MAIN;
         G_NID.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        let tip = w("FlagApps");
+        let tip = w("FlagApps (Beta)");
         let tip_len = tip.len().min(G_NID.szTip.len());
         G_NID.szTip[..tip_len].copy_from_slice(&tip[..tip_len]);
         Shell_NotifyIconW(NIM_ADD, &G_NID);

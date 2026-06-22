@@ -4,7 +4,7 @@
 // Uses AddClipboardFormatListener (WM_CLIPBOARDUPDATE) — no polling.
 
 use super::{ids::CLIPFLAG_BASE, FlagModule};
-use flag_win::{make_text_icon, rgb, w};
+use flag_win::{make_text_icon, reg_read_dword, reg_write_dword, rgb, w};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::DataExchange::*;
@@ -18,8 +18,10 @@ const CF_BITMAP_ID:      u32 = 2;
 const CF_UNICODETEXT_ID: u32 = 13;
 const CF_HDROP_ID:       u32 = 15;
 
-const CMD_TOGGLE: u32 = CLIPFLAG_BASE;
-const KEEP_LAST:  usize = 200;
+const CMD_TOGGLE:  u32 = CLIPFLAG_BASE;
+const KEEP_LAST:   usize = 200;
+const REG_KEY:     &str = r"Software\ClipFlag";
+const REG_ENABLED: &str = "Enabled";
 
 // Shell KNOWNFOLDERID for LocalAppData
 const FOLDERID_LOCAL_APP_DATA: windows::core::GUID = windows::core::GUID::from_u128(0xf1b32785_6fba_4fcf_9d55_7b8e7f157091);
@@ -35,13 +37,9 @@ unsafe impl Send for ClipFlag {}
 
 impl ClipFlag {
     pub fn new() -> Self {
+        let enabled = unsafe { reg_read_dword(REG_KEY, REG_ENABLED).unwrap_or(0) != 0 };
         let out_dir = local_appdata_path();
-        Self {
-            enabled:  true,
-            icon_on:  HICON::default(),
-            icon_off: HICON::default(),
-            out_dir,
-        }
+        Self { enabled, icon_on: HICON::default(), icon_off: HICON::default(), out_dir }
     }
     pub fn current_icon(&self) -> HICON {
         if self.enabled { self.icon_on } else { self.icon_off }
@@ -84,6 +82,7 @@ impl FlagModule for ClipFlag {
         if cmd == CMD_TOGGLE {
             self.enabled = !self.enabled;
             unsafe {
+                reg_write_dword(REG_KEY, REG_ENABLED, self.enabled as u32);
                 if self.enabled { let _ = AddClipboardFormatListener(hwnd); }
                 else            { let _ = RemoveClipboardFormatListener(hwnd); }
             }

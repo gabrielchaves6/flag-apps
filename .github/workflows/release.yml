@@ -61,6 +61,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: FlagApps ${{ github.ref_name }}
+          prerelease: true
           files: installer/dist/FlagApps-Setup.exe
           body: |
             ## Installing
