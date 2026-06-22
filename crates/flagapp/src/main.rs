@@ -298,10 +298,21 @@ fn main() {
 }
 
 unsafe fn load_app_icon(hinstance: HINSTANCE) -> HICON {
-    // Try loading icon resource #1 (embedded via build.rs / .rc file)
+    // 1. Embedded resource (MSVC CI builds)
     if let Ok(h) = LoadIconW(hinstance, PCWSTR(1usize as *const u16)) {
         return h;
     }
-    // Fallback: draw a text icon
+    // 2. flag.ico next to the exe (installed by the Inno Setup installer)
+    if let Ok(exe) = std::env::current_exe() {
+        let ico_path = exe.with_file_name("flag.ico");
+        if ico_path.exists() {
+            let path_w = w(&ico_path.to_string_lossy());
+            if let Ok(h) = LoadImageW(None, PCWSTR(path_w.as_ptr()),
+                IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE) {
+                return HICON(h.0 as *mut _);
+            }
+        }
+    }
+    // 3. Last resort: drawn text icon
     make_text_icon(rgb(37, 99, 235), "F")
 }
