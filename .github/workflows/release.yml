@@ -1,0 +1,62 @@
+name: Release
+
+# Cut a release by pushing a version tag:  git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without leading v), e.g. 0.1.0"
+        required: true
+        default: "0.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $v = '${{ github.ref_name }}' -replace '^v', ''
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $v"
+
+      - name: Install Rust (stable MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlagApps
+          path: target/release/flagapp.exe
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: FlagApps ${{ github.ref_name }}
+          files: target/release/flagapp.exe
+          body: |
+            ## Installing
+
+            Download **flagapp.exe** below and place it anywhere; run it directly.
+
+            > ⚠️ **Unsigned build.** Windows SmartScreen may warn on first run → click **More info → Run anyway**.
+            > Microsoft Defender may flag unsigned exes as false positives — restore from
+            > *Virus & threat protection → Protection history* if needed.

@@ -4,7 +4,7 @@
 mod modules;
 
 use modules::{
-    ids::*,
+    ids::{GLOBAL_ABOUT, GLOBAL_UPDATE, GLOBAL_EXIT},
     anyflag::AnyFlag, keyflag::KeyFlag, energyflag::EnergyFlag,
     newtrayflag::NewTrayFlag, clipflag::ClipFlag, deskflag::DeskFlag,
     FlagModule,
@@ -22,30 +22,6 @@ const WM_SYNC_ICON: u32 = WM_APP + 2; // any module posts this to request a tray
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELEASES_API: &str = "https://api.github.com/repos/gabrielchaves6/flag-apps/releases/latest";
 const MSG_CLASS: &str = "FlagAppsMsg";
-const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const RUN_VALUE: &str = "FlagApps";
-
-unsafe fn startup_is_registered() -> bool {
-    flag_win::reg_read_str(RUN_KEY, RUN_VALUE).is_some()
-}
-
-unsafe fn startup_set(enable: bool) {
-    if enable {
-        if let Ok(path) = std::env::current_exe() {
-            let path_str = format!("\"{}\"", path.to_string_lossy());
-            flag_win::reg_write_str(RUN_KEY, RUN_VALUE, &path_str);
-        }
-    } else {
-        use windows::Win32::System::Registry::*;
-        let sk = flag_win::w(RUN_KEY);
-        let mut hkey = HKEY::default();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, windows::core::PCWSTR(sk.as_ptr()),
-            0, KEY_SET_VALUE, &mut hkey) == ERROR_SUCCESS {
-            let _ = RegDeleteValueW(hkey, windows::core::PCWSTR(flag_win::w(RUN_VALUE).as_ptr()));
-            let _ = RegCloseKey(hkey);
-        }
-    }
-}
 
 static mut G_ABOUT_HWND: Option<HWND> = None;
 static mut G_WORK: RECT = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -76,8 +52,6 @@ unsafe fn build_popup_menu(modules: &mut Vec<Box<dyn FlagModule>>) -> HMENU {
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
     }
 
-    let startup_chk = if startup_is_registered() { MF_CHECKED } else { MF_UNCHECKED };
-    let _ = AppendMenuW(hmenu, MF_STRING | startup_chk, GLOBAL_STARTUP as usize, PCWSTR(w("Start with Windows").as_ptr()));
     let _ = AppendMenuW(hmenu, MF_STRING, GLOBAL_ABOUT as usize,  PCWSTR(w("About FlagApps").as_ptr()));
     let _ = AppendMenuW(hmenu, MF_STRING, GLOBAL_UPDATE as usize, PCWSTR(w("Check for updates").as_ptr()));
     let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -158,7 +132,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             show_about(about, G_ICON_MAIN.0 as isize, G_WORK);
                         }
                     }
-                    GLOBAL_STARTUP => { startup_set(!startup_is_registered()); }
                     GLOBAL_UPDATE  => { check_for_updates(hwnd); }
                     GLOBAL_EXIT    => { let _ = DestroyWindow(hwnd); }
                     _ => {

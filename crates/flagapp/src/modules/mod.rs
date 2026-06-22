@@ -5,7 +5,6 @@ pub mod ids {
     pub const GLOBAL_ABOUT:   u32 = 10;
     pub const GLOBAL_UPDATE:  u32 = 11;
     pub const GLOBAL_EXIT:    u32 = 12;
-    pub const GLOBAL_STARTUP: u32 = 13;
 
     pub const ANYFLAG_BASE:    u32 = 100;
     pub const KEYFLAG_BASE:    u32 = 200;
