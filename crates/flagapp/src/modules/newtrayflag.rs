@@ -34,7 +34,7 @@ impl NewTrayFlag {
 }
 
 impl FlagModule for NewTrayFlag {
-    fn name(&self) -> &'static str { "NewTrayFlag" }
+    fn name(&self) -> &'static str { "TrayFlag" }
 
     fn on_init(&mut self, hwnd: HWND) {
         unsafe {
@@ -70,7 +70,7 @@ impl FlagModule for NewTrayFlag {
         unsafe {
             let chk = if self.on { MF_CHECKED } else { MF_UNCHECKED };
             let _ = AppendMenuW(hmenu, MF_STRING | chk, CMD_TOGGLE as usize,
-                PCWSTR(w("NewTrayFlag — Show all tray icons").as_ptr()));
+                PCWSTR(w("TrayFlag — Show all tray icons (Beta)").as_ptr()));
         }
         true
     }

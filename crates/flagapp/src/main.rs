@@ -272,7 +272,7 @@ fn main() {
         G_NID.uCallbackMessage = WM_TRAY;
         G_NID.hIcon  = G_ICON_MAIN;
         G_NID.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        let tip = w("FlagApps (Beta)");
+        let tip = w("FlagApps");
         let tip_len = tip.len().min(G_NID.szTip.len());
         G_NID.szTip[..tip_len].copy_from_slice(&tip[..tip_len]);
         Shell_NotifyIconW(NIM_ADD, &G_NID);
