@@ -39,11 +39,21 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Upload exe artifact
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" "installer\FlagApps.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FlagApps
-          path: target/release/flagapp.exe
+          name: FlagApps-Setup
+          path: installer/dist/FlagApps-Setup.exe
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -51,12 +61,16 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: FlagApps ${{ github.ref_name }}
-          files: target/release/flagapp.exe
+          files: installer/dist/FlagApps-Setup.exe
           body: |
             ## Installing
 
-            Download **flagapp.exe** below and place it anywhere; run it directly.
+            Download **FlagApps-Setup.exe** below and run it (per-user, no admin).
 
-            > ⚠️ **Unsigned build.** Windows SmartScreen may warn on first run → click **More info → Run anyway**.
-            > Microsoft Defender may flag unsigned exes as false positives — restore from
-            > *Virus & threat protection → Protection history* if needed.
+            > ⚠️ **Unsigned build.** The installer isn't code-signed yet, so:
+            > - **SmartScreen** may say *"Windows protected your PC"* → click **More info → Run anyway**.
+            > - **Microsoft Defender** may quarantine the setup with a generic false positive,
+            >   common for unsigned Inno Setup installers. If that happens, restore it from
+            >   *Virus & threat protection → Protection history*.
+            >
+            > The `flagapp.exe` itself is not flagged — only the installer wrapper.
