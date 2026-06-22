@@ -1,0 +1,41 @@
+[package]
+name = "flagapp"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "flagapp"
+path = "src/main.rs"
+
+[dependencies]
+flag-win = { path = "../flag-win" }
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_System_Com_Urlmon",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_Power",
+    "Win32_Security",
+    "Win32_UI_Accessibility",
+    "Win32_System_Ole",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+]
+
+[dependencies.windows-core]
+version = "0.58"
+
+[build-dependencies]
+embed-resource = "2"
