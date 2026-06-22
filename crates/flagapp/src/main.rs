@@ -272,8 +272,11 @@ fn main() {
         // Register hwnd for keyflag winevent callback
         modules::keyflag::register_hwnd(hwnd);
 
-        // Store modules ptr in GWLP_USERDATA
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, modules.as_mut_ptr() as isize);
+        // Store modules ptr in GWLP_USERDATA.
+        // NOTE: must be a pointer to the Vec itself, not Vec::as_mut_ptr() (which
+        // returns a pointer to the element buffer — wndproc would then misread that
+        // buffer as a Vec header and walk off into garbage memory on the first message).
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&mut *modules as *mut Vec<Box<dyn FlagModule>>) as isize);
 
         // Init modules
         for m in modules.iter_mut() { m.on_init(hwnd); }
