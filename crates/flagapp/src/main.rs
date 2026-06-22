@@ -50,16 +50,19 @@ unsafe fn update_tray_icon(modules: &[Box<dyn FlagModule>]) {
     let _ = Shell_NotifyIconW(NIM_MODIFY, &G_NID);
 }
 
-unsafe fn build_popup_menu(modules: &mut Vec<Box<dyn FlagModule>>) -> HMENU {
+unsafe fn build_modules_menu(modules: &mut Vec<Box<dyn FlagModule>>) -> HMENU {
     let hmenu = CreatePopupMenu().unwrap_or_default();
-
-    for module in modules.iter() {
+    for (i, module) in modules.iter().enumerate() {
+        if i > 0 { let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null()); }
         let sep_label = w(&format!("── {} ──", module.name()));
         let _ = AppendMenuW(hmenu, MF_STRING | MF_GRAYED, 0, PCWSTR(sep_label.as_ptr()));
         module.append_menu(hmenu);
-        let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
     }
+    hmenu
+}
 
+unsafe fn build_global_menu() -> HMENU {
+    let hmenu = CreatePopupMenu().unwrap_or_default();
     let _ = AppendMenuW(hmenu, MF_STRING, GLOBAL_ABOUT as usize,  PCWSTR(w("About FlagApps").as_ptr()));
     let _ = AppendMenuW(hmenu, MF_STRING, GLOBAL_UPDATE as usize, PCWSTR(w("Check for updates").as_ptr()));
     let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -112,25 +115,31 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         match msg {
             WM_TRAY => {
                 let event = (lparam.0 & 0xffff) as u32;
-                let _ = std::fs::write(
-                    std::env::temp_dir().join("flagapp_tray.txt"),
-                    format!("WM_TRAY event=0x{:04X} wp=0x{:X} lp=0x{:X}", event, wparam.0, lparam.0),
-                );
                 match event {
+                    // Left click — module toggles
+                    0x0200 | 0x0201 | 0x0202 | 0x0400 | 0x0401 => {
+                        // NIN_SELECT=0x0400, WM_LBUTTONUP=0x0202, WM_LBUTTONDOWN=0x0201
+                        if event == 0x0202 || event == 0x0400 {
+                            G_WORK = get_work_area();
+                            let hmenu = build_modules_menu(modules);
+                            let mut pt = POINT::default();
+                            GetCursorPos(&mut pt);
+                            SetForegroundWindow(hwnd);
+                            TrackPopupMenu(hmenu, TPM_BOTTOMALIGN | TPM_RIGHTALIGN, pt.x, pt.y, 0, hwnd, None);
+                            PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
+                            DestroyMenu(hmenu);
+                        }
+                    }
+                    // Right click — global options
                     WM_RBUTTONUP | WM_CONTEXTMENU => {
                         G_WORK = get_work_area();
-                        let hmenu = build_popup_menu(modules);
+                        let hmenu = build_global_menu();
                         let mut pt = POINT::default();
                         GetCursorPos(&mut pt);
                         SetForegroundWindow(hwnd);
                         TrackPopupMenu(hmenu, TPM_BOTTOMALIGN | TPM_RIGHTALIGN, pt.x, pt.y, 0, hwnd, None);
                         PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
                         DestroyMenu(hmenu);
-                    }
-                    WM_LBUTTONDBLCLK => {
-                        if let Some(about) = G_ABOUT_HWND {
-                            show_about(about, G_ICON_MAIN.0 as isize, G_WORK);
-                        }
                     }
                     _ => {}
                 }
